@@ -5,50 +5,62 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# 🔴 重要：请将下面的字符串替换为你在小红书后台获取的真实 Token！
+# ==========================================
+# 🔴 核心配置：请在这里填入你的真实 Token
+# ==========================================
 XIAOHONGSHU_TOKEN = "db3cbf951380f6f4cca6be54427ebfdf" 
 
 @app.route('/api/index', methods=['POST'])
 def handle_xiaohongshu_webhook():
-    # 1. 尝试获取小红书放在 Header 里的签名数据
+    # -------------------------------------------------------------------
+    # 要求 1: 解析POST消息header中的X-Red-Signature参数
+    # -------------------------------------------------------------------
     signature_header = request.headers.get('X-Red-Signature')
     
-    # 如果没有签名，直接拒绝
-    if not signature_header:
-        return jsonify({"code": 400, "msg": "Missing Signature"}), 400
+    # 检查是否包含签名以及格式是否正确
+    if not signature_header or '=' not in signature_header:
+        return jsonify({"code": 400, "msg": "缺少签名或格式不正确"}), 400
     
-    # 2. 提取 'sha1=' 后面的真实签名值
-    try:
-        # signature_header 的格式是 "sha1=bf0a961d..."，我们需要等号后面的部分
-        expected_sign = signature_header.split('=')[1]
-    except IndexError:
-        return jsonify({"code": 400, "msg": "Invalid Signature Format"}), 400
+    # 提取 "sha1=" 后面的真正签名值 (格式为 sha1=bf0a...)
+    expected_sign = signature_header.split('=')[1]
 
-    # 3. 获取请求的原始二进制数据 (必须用 get_data()，千万不能先转成 JSON)
+    # -------------------------------------------------------------------
+    # 要求 2: 解析POST消息的request body（未经反序列化的原始body数据）
+    # -------------------------------------------------------------------
+    # 使用 request.get_data() 获取原始的 Bytes 数据，绝对不能用 request.json
     raw_body = request.get_data()
 
-    # 4. 使用你的 Token 和原始数据，按照小红书的规则计算 HMAC-SHA1 签名
+    # -------------------------------------------------------------------
+    # 要求 3: 以 token 为 secretKey，和 body 数据生成签名，进行校验
+    # -------------------------------------------------------------------
     token_bytes = XIAOHONGSHU_TOKEN.encode('utf-8')
+    
+    # 使用 hmac_sha1 算法计算签名
     hmac_obj = hmac.new(token_bytes, raw_body, hashlib.sha1)
     calculated_sign = hmac_obj.hexdigest()
 
-    # 5. 比对我们算出的签名和小红书发来的签名是否一致
+    # 将计算出的签名与 Header 中传来的签名进行比对
     if calculated_sign != expected_sign:
-        # 签名不一致，说明不是小红书官方发来的，或者是 Token 填错了
-        print(f"签名校验失败! 小红书发来的: {expected_sign}, 我们计算的: {calculated_sign}")
-        return jsonify({"code": 401, "msg": "Sign Error"}), 401
+        # 如果不一致，说明数据被篡改或 Token 不对，拒绝请求
+        print(f"安全拦截：签名不一致！预期:{expected_sign} 实际:{calculated_sign}")
+        return jsonify({"code": 401, "msg": "签名校验失败"}), 401
 
-    # 6. 签名校验通过！现在可以安全地解析小红书发来的 JSON 数据了
+    # ==========================================
+    # 校验通过！处理真正的业务逻辑
+    # ==========================================
     try:
+        # 此时确认数据安全，可以安全地反序列化（转为字典）来读取内容了
         data = json.loads(raw_body)
-        print("✅ 成功接收并校验小红书数据：", data)
+        print("✅ 成功接收到安全的小红书线索数据：", data)
         
-        # --- 在这里，你可以写将 data 存入数据库或处理业务的逻辑 ---
+        # 💡 你可以在这里提取具体的字段，例如：
+        # phone = data.get("data", {}).get("phone_num")
+        # print("客户电话：", phone)
         
     except json.JSONDecodeError:
-        return jsonify({"code": 400, "msg": "Invalid JSON Body"}), 400
+        return jsonify({"code": 400, "msg": "JSON解析异常"}), 400
 
-    # 7. 给小红书返回成功的响应，告诉它我们收到了（必须返回 200 状态码）
+    # 务必向小红书返回成功状态，否则小红书会判定推送失败并重试
     return jsonify({
         "code": 0,
         "msg": "success"
