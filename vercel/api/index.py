@@ -65,3 +65,8 @@ def handle_xiaohongshu_webhook():
         "code": 0,
         "msg": "success"
     }), 200
+
+# 新增一个 GET 路由，专供你在浏览器里测试网站是否存活
+@app.route('/api/index', methods=['GET'])
+def test_alive():
+    return "恭喜你！Vercel 网站存活，并且成功连通了！"
